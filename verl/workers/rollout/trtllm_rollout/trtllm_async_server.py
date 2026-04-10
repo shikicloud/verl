@@ -101,12 +101,8 @@ class TRTLLMHttpServer:
 
         logger.info(f"TRTLLMHttpServer, replica_rank: {self.replica_rank}")
 
-        self.sampling_args = {
-            "detokenize": True,
-            "end_id": self.model_config.hf_config.eos_token_id,
-            "pad_id": self.model_config.hf_config.pad_token_id,
-            "include_stop_str_in_output": True,
-        }
+        # sampling_args will be set in launch_server() based on sampler_type
+        self.sampling_args = None
 
     def get_server_address(self):
         """Get http server address and port."""
@@ -144,7 +140,24 @@ class TRTLLMHttpServer:
                 raise ValueError(f"Currently only support fp8 quantization, got: {quantization}")
 
         sampler_type = engine_kwargs.pop("sampler_type", "TRTLLMSampler")
+        self.sampler_type = sampler_type
         logger.info(f"Using sampler_type: {sampler_type}")
+
+        if sampler_type == "TorchSampler":
+            self.sampling_args = {
+                "detokenize": True,
+                "end_id": self.model_config.hf_config.eos_token_id,
+                "pad_id": self.model_config.hf_config.pad_token_id,
+                "include_stop_str_in_output": True,
+            }
+        else:
+            self.sampling_args = {
+                "detokenize": False,
+                "end_id": -1,
+                "pad_id": self.model_config.hf_config.pad_token_id,
+                "stop_token_ids": [self.model_config.hf_config.eos_token_id],
+                "include_stop_str_in_output": True,
+            }
 
         llm_kwargs = {
             "model": self.model_config.local_path,
@@ -241,7 +254,10 @@ class TRTLLMHttpServer:
 
         max_tokens = min(self.config.response_length, self.config.max_model_len - len(prompt_ids))
         sampling_params["max_tokens"] = max_tokens
-        sampling_params["logprobs"] = 0 if sampling_params.pop("logprobs", False) else None
+        if self.sampler_type == "TorchSampler":
+            sampling_params["logprobs"] = 0 if sampling_params.pop("logprobs", False) else None
+        else:
+            sampling_params["logprobs"] = 1 if sampling_params.pop("logprobs", False) else None
         if sampling_params["top_k"] == -1:
             sampling_params["top_k"] = 0
         sampling_params.update(self.sampling_args)
