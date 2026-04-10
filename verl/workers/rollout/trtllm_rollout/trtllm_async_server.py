@@ -102,10 +102,9 @@ class TRTLLMHttpServer:
         logger.info(f"TRTLLMHttpServer, replica_rank: {self.replica_rank}")
 
         self.sampling_args = {
-            "detokenize": False,
-            "end_id": -1,
+            "detokenize": True,
+            "end_id": self.model_config.hf_config.eos_token_id,
             "pad_id": self.model_config.hf_config.pad_token_id,
-            "stop_token_ids": [self.model_config.hf_config.eos_token_id],
             "include_stop_str_in_output": True,
         }
 
@@ -144,6 +143,9 @@ class TRTLLMHttpServer:
             else:
                 raise ValueError(f"Currently only support fp8 quantization, got: {quantization}")
 
+        sampler_type = engine_kwargs.pop("sampler_type", "TRTLLMSampler")
+        logger.info(f"Using sampler_type: {sampler_type}")
+
         llm_kwargs = {
             "model": self.model_config.local_path,
             "backend": "pytorch",
@@ -166,7 +168,7 @@ class TRTLLMHttpServer:
             "per_worker_gpu_share": per_worker_gpu_share,
             "enable_sleep": self.config.enable_sleep_mode,
             "allreduce_strategy": "NCCL",
-            "sampler_type": "TRTLLMSampler",
+            "sampler_type": sampler_type,
             **engine_kwargs,
         }
 
@@ -239,7 +241,7 @@ class TRTLLMHttpServer:
 
         max_tokens = min(self.config.response_length, self.config.max_model_len - len(prompt_ids))
         sampling_params["max_tokens"] = max_tokens
-        sampling_params["logprobs"] = 1 if sampling_params.pop("logprobs", False) else None
+        sampling_params["logprobs"] = 0 if sampling_params.pop("logprobs", False) else None
         if sampling_params["top_k"] == -1:
             sampling_params["top_k"] = 0
         sampling_params.update(self.sampling_args)
